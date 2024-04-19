@@ -12,7 +12,7 @@ bash zdebian.sh
 ```
 
 ## 0x02 rebuild.sh
-- 本脚本用于安装 debian 或 ubuntu
+- 本脚本用于安装 debian 或 ubuntu. (尚在开发中)
 - 基于[reinstall](https://github.com/bin456789/reinstall)修改而来
 - 用法：
 ```bash
