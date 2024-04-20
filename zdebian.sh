@@ -1,6 +1,7 @@
 #!/bin/bash
 # 用于重装debian系统的脚本，
 # 只在debian，ubuntu系统中运行
+# shellcheck disable=SC2086
 
 # color
 #underLine='\033[4m'
@@ -92,17 +93,37 @@ read -rp "Please input [Default 22]: " sshPORT
 [[ -z "$sshPORT" ]] && sshPORT=22
 
 # 获得网络信息
-# Get the name of the active network interface
-interface=$(ip -o link show | awk '$2 != "lo:" {print substr($2, 1, length($2)-1); exit}')
-# Get IP address
+## 获取并确认网卡名称
+nics=$(ip link show | awk -F': ' '{print $2}')
+i=0; interfaces=()
+for nic in $nics; do
+    [[ "$nic" == "lo" ]] && continue
+    [[ "$nic" == "docker"* ]] && continue
+    [[ "$nic" == "veth"* ]] && continue
+    interfaces[i]=$nic
+    i=$((i+1))
+done
+i=0
+for interface in "${interfaces[@]}"; do
+    # 显示网卡名称与IP
+    echo "$i: $(ip -br address show $interface)"
+    i=$((i+1))
+done
+echo; read -rp "Please confirm which is correct [Default 0]: " i
+[[ -z $i ]] && i=0
+interface="${interfaces[i]}"
+
+## Get IP address
 ip=$(ifconfig "$interface" | awk '/inet / {print $2}')
-# Get subnet mask
+## Get subnet mask
 netmask=$(ifconfig "$interface" | awk '/netmask / {print $4}')
-# Get Gateway
+## Get Gateway
 gateway=$(ip route | awk '/default/ {print $3}')
+
 
 # 是否使用静态IP
 read -r -d '' network <<- EOF
+d-i netcfg/disable_autoconfig boolean true
 d-i netcfg/dhcp_failed note
 d-i netcfg/dhcp_options select Configure network manually
 d-i netcfg/get_ipaddress string $ip
@@ -175,7 +196,6 @@ d-i user-setup/allow-password-weak boolean true
 
 ### 网络设置
 d-i netcfg/choose_interface select auto
-# # d-i netcfg/disable_autoconfig boolean true
 $network
 
 ### Low memory mode
@@ -198,22 +218,23 @@ d-i time/zone string Asia/Shanghai
 
 ### 分区设置
 d-i partman-auto/disk string /dev/$DEVICE_PREFIX
+d-i partman-auto/choose_recipe select atomic
 d-i partman-auto/method string regular
 d-i partman-lvm/device_remove_lvm boolean true
 d-i partman-md/device_remove_md boolean true
-d-i partman-basicfilesystems/no_swap boolean false
-d-i partman-auto/expert_recipe string  \
-200 1 -1 ext4 \
-        \$primary{ } \
-        method{ format } format{ } \
-        use_filesystem{ } filesystem{ ext4 } \
-        mountpoint{ / } \
-    .
-d-i partman-md/confirm_nooverwrite boolean true
-d-i partman-lvm/confirm_nooverwrite boolean true
-d-i partman/confirm_write_new_label boolean true
+d-i partman-partitioning/confirm_write_new_label boolean true
 d-i partman/choose_partition select finish
 d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+
+# d-i partman-basicfilesystems/no_swap boolean true
+# d-i partman-auto/expert_recipe string  \
+# 200 1 -1 ext4 \
+#         \$primary{ } \
+#         method{ format } format{ } \
+#         use_filesystem{ } filesystem{ ext4 } \
+#         mountpoint{ / } \
+#     .
 
 ### Package selection
 tasksel tasksel/first multiselect ssh-server
@@ -240,20 +261,23 @@ EOF
 
 find . | cpio -H newc -o | gzip -6 > ../initrd.gz && cd ..
 rm -rf temp_initrd 
-cat << EOF >> /etc/grub.d/40_custom
-menuentry "Digital-Review Debian Installer AMD64" {
+#cat << EOF >> /etc/grub.d/40_custom
+grubfile="/boot/grub/grub.cfg"
+mv $grubfile "${grubfile}.bak"
+cat <<EOF > $grubfile
+set timeout=3
+menuentry "zDebian Installer AMD64" {
     set root="(hd0,$partitionr_root_number)"
     linux /netboot/linux auto=true priority=critical lowmem/low=true preseed/file=/preseed.cfg
     initrd /netboot/initrd.gz
 }
 EOF
 
-# Modifying the GRUB DEFAULT option
-sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=2/' /etc/default/grub
-# Modify the GRUB TIMEOUT option
-sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=2/' /etc/default/grub
-
-update-grub 
+# # Modifying the GRUB DEFAULT option
+# sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=2/' /etc/default/grub
+# # Modify the GRUB TIMEOUT option
+# sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=2/' /etc/default/grub
+# update-grub 
 
 echo -en "\n${aoiBlue}Configuration complete...${plain}\n"
 
