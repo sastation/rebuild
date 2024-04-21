@@ -92,8 +92,7 @@ echo -ne "\n${aoiBlue}Set ssh port${plain}\n"
 read -rp "Please input [Default 22]: " sshPORT
 [[ -z "$sshPORT" ]] && sshPORT=22
 
-# 获得网络信息
-## 获取并确认网卡名称
+# 获取并确认网卡名称
 nics=$(ip link show | awk -F': ' '{print $2}')
 i=0; interfaces=()
 for nic in $nics; do
@@ -113,13 +112,10 @@ echo; read -rp "Please confirm which is correct [Default 0]: " i
 [[ -z $i ]] && i=0
 interface="${interfaces[i]}"
 
-## Get IP address
+# 获得网卡IP、掩码与网关
 ip=$(ifconfig "$interface" | awk '/inet / {print $2}')
-## Get subnet mask
 netmask=$(ifconfig "$interface" | awk '/netmask / {print $4}')
-## Get Gateway
 gateway=$(ip route | awk '/default/ {print $3}')
-
 
 # 是否使用静态IP
 read -r -d '' network <<- EOF
@@ -166,6 +162,13 @@ if [ -n "$DEVICE_PREFIX" ]; then
 else
     echo "Could not determine the device naming prefix. Defaulting to sda."
     DEVICE_PREFIX="sda"
+fi
+
+# EFI disk 
+EFI=""
+if [ -d /sys/firmware/efi ]; then
+    EFI="106 1 106 free \
+    \$iflabel{ gpt } \$reusemethod{ } method{ efi } format{ } ."
 fi
 
 # 下载安装启动文件
@@ -218,7 +221,7 @@ d-i time/zone string Asia/Shanghai
 
 ### 分区设置
 d-i partman-auto/disk string /dev/$DEVICE_PREFIX
-d-i partman-auto/choose_recipe select atomic
+#d-i partman-auto/choose_recipe select atomic
 d-i partman-auto/method string regular
 d-i partman-lvm/device_remove_lvm boolean true
 d-i partman-md/device_remove_md boolean true
@@ -227,14 +230,12 @@ d-i partman/choose_partition select finish
 d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true
 
-# d-i partman-basicfilesystems/no_swap boolean true
-# d-i partman-auto/expert_recipe string  \
-# 200 1 -1 ext4 \
-#         \$primary{ } \
-#         method{ format } format{ } \
-#         use_filesystem{ } filesystem{ ext4 } \
-#         mountpoint{ / } \
-#     .
+d-i partman-basicfilesystems/no_swap boolean false
+d-i partman-efi/non_efi_system boolean true
+d-i partman-auto/expert_recipe string efi-root :: \
+    $EFI \
+    200 200 -1 ext4 \
+    method{ format } format{ } use_filesystem{ } filesystem{ ext4 } mountpoint{ / } .
 
 ### Package selection
 tasksel tasksel/first multiselect ssh-server
@@ -260,7 +261,7 @@ d-i finish-install/reboot_in_progress note
 EOF
 
 find . | cpio -H newc -o | gzip -6 > ../initrd.gz && cd ..
-rm -rf temp_initrd 
+#rm -rf temp_initrd 
 #cat << EOF >> /etc/grub.d/40_custom
 grubfile="/boot/grub/grub.cfg"
 mv $grubfile "${grubfile}.bak"
