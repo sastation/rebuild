@@ -164,7 +164,7 @@ else
     DEVICE_PREFIX="sda"
 fi
 
-# EFI disk 
+# UEFI系统需要一个EFI分区
 EFI=""
 if [ -d /sys/firmware/efi ]; then
     EFI="106 1 106 free \
