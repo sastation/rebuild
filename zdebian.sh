@@ -1,57 +1,55 @@
 #!/bin/bash
-# 用于重装debian系统的脚本，
-# 只在debian，ubuntu系统中运行
-# shellcheck disable=SC2086
 
-# color
-#underLine='\033[4m'
-aoiBlue='\033[36m'
-#blue='\033[34m'
-#yellow='\033[33m'
-#green='\033[32m'
-red='\033[31m'
-plain='\033[0m'
-
-
-is_in_china() {
-    if [ -z "$_is_in_china" ]; then
-        wget -qO - -L http://www.cloudflare.com/cdn-cgi/trace |
-            grep -qx 'loc=CN' && _is_in_china=true ||
-            _is_in_china=false
-    fi
-    $_is_in_china
+echo_color() {
+    color=$1; text=$2
+    declare -A colors=(
+        ['red']='\033[31m'
+        ['aoiBlue']='\033[36m'
+        ['green']='\033[32]'
+        ['yellow']='\033[33]' 
+    )
+    echo -en "${colors[$color]}${text}\033[0m" # plain='\033[0m'
 }
+info() { echo_color "aoiBlue" "$*"; }
+error() { echo_color "red" "$*"; }
 
 
-# 主进程
-clear
-# 检查是否是 root 用户
+
+# 程序主体入口
+# 判断运行环境是否为 Debian/Ubuntu
+OSName=$(grep -e "^NAME=" /etc/os-release | awk -F'"' '{print $2}' | awk '{print $1}')
+if [ "$OSName" != 'Ubuntu' ] && [ "$OSName" != 'Debian' ]; then
+    error "\nOnly support Debian/Ubuntu env...\n"; exit 1
+fi
+
+#判断是否为root用户
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Please use the root user to execute this script."
-    exit
+    error "\nError: Please run as ROOT.\n"; exit 1
 fi
 
 # 安装必要软件
-echo -en "\n${aoiBlue}Installation dependencies...${plain}\n"
-apt update
-apt install wget net-tools -y
+info "\nInstall the required software...\n"
+apt update; apt -y install wget net-tools
 
 # 检查是否在CN
-if is_in_china; then
+wget -qO - -L http://www.cloudflare.com/cdn-cgi/trace |
+    grep -qx 'loc=CN' && is_in_china=true || is_in_china=false
+
+# 按区域设置镜像站点与DNS
+if $is_in_china; then
     domain="mirrors.tuna.tsinghua.edu.cn"
     dns="119.29.29.29 223.5.5.5"
 else
     domain="ftp.debian.org"
     dns="1.1.1.1 8.8.8.8"
 fi
+info "-----------------------------------------------------------------\n"
+echo "GitHub: https://github.com/sastation/rebuild"
+echo "Is in China: " "$is_in_china"
+info "-----------------------------------------------------------------\n"
 
-echo "-----------------------------------------------------------------"
-echo -e "${aoiBlue}GitHub${plain}: https://github.com/sastation/rebuild"
-echo -e "Is in China: " "$_is_in_china"
-echo "-----------------------------------------------------------------"
-
-# 选择Debian版本，默认为 1 (Debian 12)
-echo -en "\n${aoiBlue}Supported Versions:${plain}\n"
+# 选择Debian版本，默认为 [1] (Debian 12)
+info "\nSelect version:\n"
 echo "[1] Debian 12 bookworm"
 echo "[2] Debian 11 bullseye"
 echo "[3] Debian 10 buster"
@@ -64,104 +62,91 @@ elif [ "$version" == "2" ]; then
     debian_version="bullseye"
 elif [ "$version" == "3" ]; then
     debian_version="buster"
-else 
-    echo -e "${red}No correct option entered, ready to exit...${plain}"
-    sleep 1
-    exit
+else
+    error "\nIncorrect option, ready to exit...\n"
+    sleep 1; exit 1
 fi
 
-echo -en "\n${aoiBlue}Start installing Debian $debian_version...${plain}\n"
+info "\nStart installing Debian $debian_version...\n"
 
 # 定义hostname，默认为 sastation
-echo -en "\n${aoiBlue}Set hostname:${plain}\n"
+info "\nSet hostname:\n"
 read -rp "Please input [Default sastation]:" HostName
 [[ -z "$HostName" ]] && HostName="sastation"
 
 # 定义root password，默认为16位随机
-echo -ne "\n${aoiBlue}Set root password${plain}\n"
+info "\nSet root password\n"
 read -rp "Please input [Enter directly to generate a random password]: " passwd
 if [ -z "$passwd" ]; then
     # 生成随机密码
     LENGTH=16
     passwd=$(tr -dc 'A-Za-z0-9.:,_!*+' </dev/urandom | head -c $LENGTH)
-    echo -e "Generated password: ${red}$passwd${plain}"
+    echo -n "Generated password: "; error "$passwd\n"
 fi
 
 # 定义ssh端口，默认为 22
-echo -ne "\n${aoiBlue}Set ssh port${plain}\n"
+info "\nSet ssh port\n"
 read -rp "Please input [Default 22]: " sshPORT
 [[ -z "$sshPORT" ]] && sshPORT=22
 
-# 获取并确认网卡名称
-nics=$(ip link show | awk -F': ' '{print $2}')
-i=0; interfaces=()
-for nic in $nics; do
-    [[ "$nic" == "lo" ]] && continue
-    [[ "$nic" == "docker"* ]] && continue
-    [[ "$nic" == "veth"* ]] && continue
-    interfaces[i]=$nic
-    i=$((i+1))
+# 获得默认网卡名称、MAC
+for v in 4 6; do
+    if ethx=$(ip -$v route show default | head -1 | awk '{print $5}'); then
+        mac_addr=$(ip link show dev "$ethx" | grep link/ether | head -1 | awk '{print $2}')
+        break
+    fi
 done
-i=0
-for interface in "${interfaces[@]}"; do
-    # 显示网卡名称与IP
-    echo "$i: $(ip -br address show $interface)"
-    i=$((i+1))
-done
-echo; read -rp "Please confirm which is correct [Default 0]: " i
-[[ -z $i ]] && i=0
-interface="${interfaces[i]}"
 
-# 获得网卡IP、掩码与网关
-ip=$(ifconfig "$interface" | awk '/inet / {print $2}')
-netmask=$(ifconfig "$interface" | awk '/netmask / {print $4}')
-gateway=$(ip route | awk '/default/ {print $3}')
+# 获得默认网卡IP/CIDR、网关，若无ipv4则使用ipv6
+ip_addr="$(ip -4 -o addr show scope global dev "$ethx" | head -1 | awk '{print $4}')"
+ip_gateway="$(ip -4 route show default dev "$ethx" | head -1 | awk '{print $3}')"
+if [ -z "$ip_gateway" ]; then
+    ip_addr="$(ip -6 -o addr show scope global dev "$ethx" | head -1 | awk '{print $4}')"
+    ip_gateway="$(ip -6 route show default dev "$ethx" | head -1 | awk '{print $3}')"
+fi
+
+# 显示网络信息
+info "\nNetwork information:\n"
+echo "NIC: $ethx"
+echo "MAC: $mac_addr"
+echo "IP: $ip_addr"
+echo "Gateway: $ip_gateway"
 
 # 是否使用静态IP
 read -r -d '' network <<- EOF
 d-i netcfg/disable_autoconfig boolean true
 d-i netcfg/dhcp_failed note
 d-i netcfg/dhcp_options select Configure network manually
-d-i netcfg/get_ipaddress string $ip
-d-i netcfg/get_netmask string $netmask
-d-i netcfg/get_gateway string $gateway
+d-i netcfg/get_ipaddress string $ip_addr
+d-i netcfg/get_gateway string $ip_gateway
 d-i netcfg/get_nameservers string $dns
 d-i netcfg/confirm_static boolean true
 EOF
-echo -ne "\n${aoiBlue}DHCP or Static network. ${plain}\n"
+info "\nDHCP or Static network.\n"
 read -rp "Please input [Default: d/DHCP] [d|s]: " dhcp
 if [ -z "$dhcp" ] || [ "$dhcp" == "d" ]; then
     network=""
 fi
 
-# 代理服务器若有, 默认为空
-echo -ne "\n${aoiBlue}Proxy Server${plain}\n"
-read -rp "Please input [Default none]: " proxy
-
-# Get the device number of the root directory
-root_device=$(df / | awk 'NR==2 {print $1}')
-
-# Extract the partition number from the device number
-partitionr_root_number=$(echo "$root_device" | grep -oE '[0-9]+$')
+# 设置代理服务器, 默认为没有
+info "\nProxy Server\n"
+read -rp "Please enter [Default none]: " proxy
 
 # Check if any disk is mounted
 if [ -z "$(df -h)" ]; then
-    echo "No disks are currently mounted."
-    exit 1
+    error "\nNo disks are currently mounted...\n"; exit 1
 fi
 
-# Extract the device name of the root partition
-ROOT_DEVICE=$(df / | grep -oE '/dev/[a-z]+')
+# 获得根分区序号
+partition_root_number=$(df / | awk 'NR==2 {print $1}' | grep -oE '[0-9]+$')
 
-# Extract the device prefix (sda or vda)
-DEVICE_PREFIX=$(echo "$ROOT_DEVICE" | grep -oE 'sda|vda')
-
-# Check if the device prefix is present
+# 获得根分区名称并过滤判断是否为[sda|vda]
+DEVICE_PREFIX=$(df / | grep -oE '/dev/[a-z]+' | grep -oE 'sda|vda')
 if [ -n "$DEVICE_PREFIX" ]; then
     echo "The root partition is mounted on a device with the prefix: $DEVICE_PREFIX"
 else
-    echo "Could not determine the device naming prefix. Defaulting to sda."
-    DEVICE_PREFIX="sda"
+    error "\nCould not determine the device naming prefix: sda or vda\n"; exit 1
+    #DEVICE_PREFIX="sda"
 fi
 
 # UEFI系统需要一个EFI分区
@@ -268,7 +253,7 @@ mv $grubfile "${grubfile}.bak"
 cat <<EOF > $grubfile
 set timeout=3
 menuentry "zDebian Installer AMD64" {
-    set root="(hd0,$partitionr_root_number)"
+    set root="(hd0,$partition_root_number)"
     linux /netboot/linux auto=true priority=critical lowmem/low=true preseed/file=/preseed.cfg
     initrd /netboot/initrd.gz
 }
@@ -280,7 +265,7 @@ EOF
 # sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=2/' /etc/default/grub
 # update-grub 
 
-echo -en "\n${aoiBlue}Configuration complete...${plain}\n"
+info "\nConfiguration complete...\n"
 
-echo -ne "\n[${aoiBlue}Finish${plain}] Input '${red}reboot${plain}' to continue the subsequential installation.\n"
+info "\n[Finish] Enter: "; error "reboot"; info " to continue the installation.\n"
 exit 0
