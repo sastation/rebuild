@@ -1,4 +1,8 @@
 #!/bin/bash
+# 用于在debian/ubuntu环境中重新安装debian
+
+# 是否有需要使用默认值
+[[ "$1" == "default" ]] && default=true || default=false
 
 echo_color() {
     color=$1; text=$2
@@ -11,7 +15,7 @@ echo_color() {
     echo -en "${colors[$color]}${text}\033[0m" # plain='\033[0m'
 }
 info() { echo_color "aoiBlue" "$*"; }
-error() { echo_color "red" "$*"; }
+warn() { echo_color "red" "$*"; }
 
 
 
@@ -19,12 +23,12 @@ error() { echo_color "red" "$*"; }
 # 判断运行环境是否为 Debian/Ubuntu
 OSName=$(grep -e "^NAME=" /etc/os-release | awk -F'"' '{print $2}' | awk '{print $1}')
 if [ "$OSName" != 'Ubuntu' ] && [ "$OSName" != 'Debian' ]; then
-    error "\nOnly support Debian/Ubuntu env...\n"; exit 1
+    warn "\nOnly support Debian/Ubuntu env...\n"; exit 1
 fi
 
 #判断是否为root用户
 if [ "$EUID" -ne 0 ]; then
-    error "\nError: Please run as ROOT.\n"; exit 1
+    warn "\nError: Please run as ROOT.\n"; exit 1
 fi
 
 # 安装必要软件
@@ -49,12 +53,13 @@ echo "Is in China: " "$is_in_china"
 info "-----------------------------------------------------------------\n"
 
 # 选择Debian版本，默认为 [1] (Debian 12)
-info "\nSelect version:\n"
-echo "[1] Debian 12 bookworm"
-echo "[2] Debian 11 bullseye"
-echo "[3] Debian 10 buster"
-read -rp "Please select [Default 1]:" version
-
+if ! $default; then
+    info "\nSelect version:\n"
+    echo "[1] Debian 12 bookworm"
+    echo "[2] Debian 11 bullseye"
+    echo "[3] Debian 10 buster"
+    read -rp "Please select [Default 1]:" version
+fi
 if [ -z "$version" ] || [ "$version" == "1" ]; then
     version=1
     debian_version="bookworm"
@@ -63,30 +68,36 @@ elif [ "$version" == "2" ]; then
 elif [ "$version" == "3" ]; then
     debian_version="buster"
 else
-    error "\nIncorrect option, ready to exit...\n"
+    warn "\nIncorrect option, ready to exit...\n"
     sleep 1; exit 1
 fi
 
 info "\nStart installing Debian $debian_version...\n"
 
 # 定义hostname，默认为 sastation
-info "\nSet hostname:\n"
-read -rp "Please input [Default sastation]:" HostName
+if ! $default; then
+    info "\nSet hostname:\n"
+    read -rp "Please input [Default sastation]:" HostName
+fi
 [[ -z "$HostName" ]] && HostName="sastation"
 
 # 定义root password，默认为16位随机
-info "\nSet root password\n"
-read -rp "Please input [Enter directly to generate a random password]: " passwd
+if ! $default; then
+    info "\nSet root password\n"
+    read -rp "Please input [Enter directly to generate a random password]: " passwd
+fi
 if [ -z "$passwd" ]; then
     # 生成随机密码
     LENGTH=16
     passwd=$(tr -dc 'A-Za-z0-9.:,_!*+' </dev/urandom | head -c $LENGTH)
-    echo -n "Generated password: "; error "$passwd\n"
+    echo -n "Generated password: "; warn "$passwd\n";
 fi
 
 # 定义ssh端口，默认为 22
-info "\nSet ssh port\n"
-read -rp "Please input [Default 22]: " sshPORT
+if ! $default; then
+    info "\nSet ssh port\n"
+    read -rp "Please input [Default 22]: " sshPORT
+fi
 [[ -z "$sshPORT" ]] && sshPORT=22
 
 # 获得默认网卡名称、MAC
@@ -122,19 +133,23 @@ d-i netcfg/get_gateway string $ip_gateway
 d-i netcfg/get_nameservers string $dns
 d-i netcfg/confirm_static boolean true
 EOF
-info "\nDHCP or Static network.\n"
-read -rp "Please input [Default: d/DHCP] [d|s]: " dhcp
+if ! $default; then
+    info "\nDHCP or Static network.\n"
+    read -rp "Please input [Default: d/DHCP] [d|s]: " dhcp
+fi
 if [ -z "$dhcp" ] || [ "$dhcp" == "d" ]; then
     network=""
 fi
 
 # 设置代理服务器, 默认为没有
-info "\nProxy Server\n"
-read -rp "Please enter [Default none]: " proxy
+if ! $default; then
+    info "\nProxy Server\n"
+    read -rp "Please enter [Default none]: " proxy
+fi
 
 # Check if any disk is mounted
 if [ -z "$(df -h)" ]; then
-    error "\nNo disks are currently mounted...\n"; exit 1
+    warn "\nNo disks are currently mounted...\n"; exit 1
 fi
 
 # 获得根分区序号
@@ -145,7 +160,7 @@ DEVICE_PREFIX=$(df / | grep -oE '/dev/[a-z]+' | grep -oE 'sda|vda')
 if [ -n "$DEVICE_PREFIX" ]; then
     echo "The root partition is mounted on a device with the prefix: $DEVICE_PREFIX"
 else
-    error "\nCould not determine the device naming prefix: sda or vda\n"; exit 1
+    warn "\nCould not determine the device naming prefix: sda or vda\n"; exit 1
     #DEVICE_PREFIX="sda"
 fi
 
@@ -266,6 +281,16 @@ EOF
 # update-grub 
 
 info "\nConfiguration complete...\n"
+echo "In China: ${is_in_china}"
+echo "Hostname: ${HostName}"
+echo "Adapter: ${ethx}"
+echo -n "Network: "; [[ -z $network ]] && echo "dhcp" || echo "static"
+echo "IP: ${ip_addr}"
+echo "Gateway: ${ip_gateway}"
+echo "ssh port: ${sshPORT}"
+echo "Proxy: ${proxy}"
+echo -n "root password: "; warn "$passwd"
+echo 
+info "\n[Finish] Enter: "; warn "reboot"; info " to continue the installation.\n"
 
-info "\n[Finish] Enter: "; error "reboot"; info " to continue the installation.\n"
 exit 0
