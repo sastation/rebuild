@@ -20,6 +20,10 @@ DOMAIN="lan wnict.com"
 
 # 局域网代理地址（Family 环境使用）
 PROXY_HTTP="http://pxy.lan:8080"
+APT_PROXY_CONF="/etc/apt/apt.conf.d/90proxy.conf"
+
+# sudoers 独立配置文件
+SUDOERS_FILE="/etc/sudoers.d/90-user-env"
 
 # DNS 服务器
 DNS_VPS_PRIMARY="1.1.1.1"
@@ -70,9 +74,8 @@ DetectArea() {
         export http_proxy="${PROXY_HTTP}"
         export https_proxy="${PROXY_HTTP}"
         if [[ "${ID}" -eq 0 ]]; then
-            fs="/etc/apt/apt.conf.d/90proxy.conf"
-            echo "Acquire::http::Proxy \"${PROXY_HTTP}\";" > "${fs}"
-            echo "Acquire::https::Proxy \"${PROXY_HTTP}\";" >> "${fs}"
+            echo "Acquire::http::Proxy \"${PROXY_HTTP}\";" > "${APT_PROXY_CONF}"
+            echo "Acquire::https::Proxy \"${PROXY_HTTP}\";" >> "${APT_PROXY_CONF}"
         fi
     fi
 }
@@ -133,10 +136,11 @@ User() {
     echo "${ADMIN_USER}:${newP}" | chpasswd
 
     # Add into sudoers
-    echo "=> Add ${ADMIN_USER} into sudoers"
+    echo "=> Add ${ADMIN_USER} into sudoers (${SUDOERS_FILE})"
     apt install sudo -y
-    if ! grep -q "^${ADMIN_USER}\s\+ALL=(ALL:ALL) NOPASSWD:ALL" /etc/sudoers; then
-        echo "${ADMIN_USER}   ALL=(ALL:ALL) NOPASSWD:ALL" >> /etc/sudoers
+    if [[ ! -f "${SUDOERS_FILE}" ]] || ! grep -q "^${ADMIN_USER}" "${SUDOERS_FILE}" 2>/dev/null; then
+        echo "${ADMIN_USER}   ALL=(ALL:ALL) NOPASSWD:ALL" >> "${SUDOERS_FILE}"
+        chmod 0440 "${SUDOERS_FILE}"
     else
         echo "${ADMIN_USER} already in sudoers, skipping."
     fi
@@ -242,9 +246,13 @@ Set_Journal() {
 }
 
 Modify_Sudoers() {
-    # 在 /etc/sudoers 中添加选项：继承代理环境、设置超时时间
-    sed -i "/Defaults\tenv_reset/aDefaults\ttimestamp_timeout=30" /etc/sudoers
-    sed -i "/Defaults\tenv_reset/aDefaults\tenv_keep=\"http_proxy https_proxy HTTP_PROXY HTTPS_PROXY\"" /etc/sudoers
+    # 在 sudoers.d 中添加选项：继承代理环境、设置超时时间
+    {
+        echo "Defaults timestamp_timeout=30"
+        echo "Defaults env_keep=\"http_proxy https_proxy HTTP_PROXY HTTPS_PROXY\""
+    } >> "${SUDOERS_FILE}"
+    chmod 0440 "${SUDOERS_FILE}"
+    echo "=> Updated ${SUDOERS_FILE}"
 }
 
 Set_Ping() {
