@@ -1,0 +1,80 @@
+#!/bin/bash
+set -euo pipefail
+
+# ============================================================
+# Configuration — edit these values before running
+# ============================================================
+
+# Google Authenticator 免验证 IP（access_vps.conf）
+TRUSTED_IPS=(
+    "127.0.0.1/32"
+    "192.168.100.0/24"
+    "38.59.244.146/32"
+    "185.201.227.119/32"
+    "173.82.251.188/32"
+    "150.158.158.58/32"
+    "43.156.103.92/32"
+    "180.163.115.0/24"
+    "114.86.129.1/24"
+    "45.251.105.181/24"
+)
+
+# ============================================================
+# Functions
+# ============================================================
+
+GoogleAuth() {
+    # 安装及配置 google-authenticator
+    echo "=> Setup Google authenticator"
+    read -rsp $'Press enter to continue...\n'
+
+    apt update
+    apt -y install libpam-google-authenticator
+    apt -y install qrencode
+
+    FS="/etc/pam.d/sshd"
+    sed -i '3i\# white-ip list' "${FS}"
+    sed -i '4i\auth [success=1 default=ignore] pam_access.so accessfile=/etc/security/access_vps.conf' "${FS}"
+    sed -i '5i\# google authenticator plug' "${FS}"
+    sed -i '6i\auth required pam_google_authenticator.so nullok' "${FS}"
+    sed -i '7i\ ' "${FS}"
+
+    FS="/etc/ssh/sshd_config"
+    sed -i 's/^ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' "${FS}"
+
+    cat > /etc/security/access_vps.conf << EOF
+# skip one-time password if logging in from the trusted network
+EOF
+    for ip in "${TRUSTED_IPS[@]}"; do
+        echo "+ : ALL : ${ip}" >> /etc/security/access_vps.conf
+    done
+    echo "- : ALL : ALL" >> /etc/security/access_vps.conf
+}
+
+GoogleAuth_Local() {
+    # 对当前用户的 google_authenticator 环境进行配置
+    google-authenticator
+
+    cd ~
+    FS=".google_authenticator"
+    chmod 600 "${FS}"
+    for code in 64802810 64802811 64802812 64802813 64802814 64802815 64802816 64802817 64802818 64802819; do
+        echo "${code}" >> "${FS}"
+    done
+    chmod 400 "${FS}"
+}
+
+# ============================================================
+# Main
+# ============================================================
+if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
+    echo "=== Google Auth Setup ==="
+    echo "1) System-wide setup (GoogleAuth)"
+    echo "2) Local user setup (GoogleAuth_Local)"
+    read -p "Choice: " opt
+    case "${opt}" in
+        1) GoogleAuth ;;
+        2) GoogleAuth_Local ;;
+        *) echo "Invalid choice." ;;
+    esac
+fi
