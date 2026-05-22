@@ -53,9 +53,6 @@ if [[ -f "${VPS_ENV}" ]]; then
     source "${VPS_ENV}"
 fi
 
-# 派生变量
-USER_HOME="/home/${ADMIN_USER}"
-
 # 检查必要配置是否已填写
 if [[ "${ADMIN_USER}" == __* ]]; then
     echo "ERROR: ADMIN_USER is not set."
@@ -67,6 +64,7 @@ fi
 # ============================================================
 # Runtime variables (do not edit)
 # ============================================================
+USER_HOME="/home/${ADMIN_USER}"
 ID="$(id -u)"
 OSName="$(awk -F'"' '/^NAME=/ {print $2}' /etc/os-release | awk '{print $1}')"
 OSVersion="$(awk -F'"' '/VERSION_ID=/ {print $2}' /etc/os-release)"
