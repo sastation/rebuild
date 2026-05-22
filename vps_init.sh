@@ -422,16 +422,20 @@ SetupUserEnv() {
 
 Verify() {
     # 基本信息
-    echo "${ID}"
-    echo "${OSName}"
-    echo "${OSVersion}"
+    echo "UID: ${ID}"
+    echo "OSName: ${OSName}"
+    echo "OSVersion: ${OSVersion}"
     
     # 验证配置
+    echo "======"
     sudo sysctl net.ipv4.tcp_available_congestion_control
     sudo lsmod | grep bbr || true
+    echo "======"
     sudo netstat -lntp
     sudo netstat -lnup
+    echo "======"
     if [ -x /usr/sbin/ufw ]; then
+        echo "UFW Status:"
         sudo ufw status
     fi
 }
