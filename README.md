@@ -4,13 +4,13 @@
 ## 一键重装系统（DD系统）
 
 ```bash
-# Debian 专用，支持在 debian/ubuntu 中重新安装一纯净 debian
+# Debian 专用，支持在 debian/ubuntu 中重新安装纯净 debian
 ./zdebian.sh
 
-# bin456789/reinstall
+# 源自 bin456789/reinstall
 ./bin456789_reinstall.sh
 
-# leitbogioro/Tools
+# 源自 leitbogioro/Tools
 ./reinstallNET.sh
 
 ```
