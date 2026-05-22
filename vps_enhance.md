@@ -101,11 +101,10 @@ Acquire::https::Proxy "http://pxy.lan:8080";
 
 ```bash
 # 移除 snap
-apt -y purge snpad
+apt -y purge snapd
 
 # disable apt auto upgrade
-systemctl stop unattended-upgrades
-systemctl disable unattended-upgrades
+systemctl disable --now unattended-upgrades
 
 cat > /etc/apt/apt.conf.d/90-disable-updates.conf << 'EOF'
 APT::Periodic::Update-Package-Lists "0";
