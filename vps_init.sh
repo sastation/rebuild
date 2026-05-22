@@ -2,24 +2,23 @@
 set -euo pipefail
 
 # ============================================================
-# Configuration — edit these values before running
+# Configuration — edit these values or create vps_init.env
 # ============================================================
 
 # 普通用户（用于日常管理）
-ADMIN_USER="zwang"
-USER_HOME="/home/${ADMIN_USER}"
+ADMIN_USER="__ADMIN_USER__"
 
 # SSH
-SSH_PORT="21622"
+SSH_PORT="__SSH_PORT__"
 
 # 时区
 TIMEZONE="Asia/Shanghai"
 
 # DNS 搜索域
-DOMAIN="lan wnict.com"
+DOMAIN="__DOMAIN__"
 
 # 局域网代理地址（Family 环境使用）
-PROXY_HTTP="http://pxy.lan:8080"
+PROXY_HTTP="__PROXY_HTTP__"
 APT_PROXY_CONF="/etc/apt/apt.conf.d/90-proxy.conf"
 
 # sudoers 独立配置文件
@@ -28,22 +27,42 @@ SUDOERS_FILE="/etc/sudoers.d/90-user-env"
 # DNS 服务器
 DNS_VPS_PRIMARY="1.1.1.1"
 DNS_VPS_SECONDARY="8.8.8.8"
-DNS_FAMILY_PRIMARY="192.168.100.17"
-DNS_FAMILY_SECONDARY="192.168.100.18"
+DNS_FAMILY_PRIMARY="__DNS_FAMILY_PRIMARY__"
+DNS_FAMILY_SECONDARY="__DNS_FAMILY_SECONDARY__"
 
 # Journal 日志上限
 JOURNAL_MAX_SIZE_VPS="64M"
 JOURNAL_MAX_SIZE_FAMILY="128M"
 
 # Git 配置
-GIT_NAME="David Wang"
-GIT_EMAIL="sa.station@gmail.com"
+GIT_NAME="__GIT_NAME__"
+GIT_EMAIL="__GIT_EMAIL__"
 
 # SSH 公钥（写入 ADMIN_USER 的 authorized_keys）
+# 格式：每行一个公钥，用双引号括起
 SSH_AUTHORIZED_KEYS=(
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILinYNuMVdOfusVcAJT+nz8Uw66q5OeEUy1XZLUhncj7 user"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOmketJKXswgywYP7rj7aM2ZsvRm51cyDQ+UR0jrBRA4 terminal"
+    "__SSH_KEY_1__"
+    "__SSH_KEY_2__"
 )
+
+# ============================================================
+# Load personal config override
+# ============================================================
+VPS_ENV="$(dirname "$0")/vps_init.env"
+if [[ -f "${VPS_ENV}" ]]; then
+    source "${VPS_ENV}"
+fi
+
+# 派生变量
+USER_HOME="/home/${ADMIN_USER}"
+
+# 检查必要配置是否已填写
+if [[ "${ADMIN_USER}" == __* ]]; then
+    echo "ERROR: ADMIN_USER is not set."
+    echo "       Create vps_init.env or edit the config section above."
+    echo "       Run ./generate.sh to generate a personal config."
+    exit 1
+fi
 
 # ============================================================
 # Runtime variables (do not edit)
