@@ -71,9 +71,13 @@ GoogleAuth_Local() {
     cd ~
     FS=".google_authenticator"
     chmod 600 "${FS}"
-    for code in 64802810 64802811 64802812 64802813 64802814 64802815 64802816 64802817 64802818 64802819; do
-        echo "${code}" >> "${FS}"
+
+    echo "=> Generating 5 random scratch codes..."
+    for i in $(seq 1 5); do
+        od -An -N4 -tu4 /dev/urandom 2>/dev/null \
+            | awk '{print ($1 % 90000000) + 10000000}' >> "${FS}"
     done
+
     chmod 400 "${FS}"
 }
 
