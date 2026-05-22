@@ -20,7 +20,7 @@ DOMAIN="lan wnict.com"
 
 # 局域网代理地址（Family 环境使用）
 PROXY_HTTP="http://pxy.lan:8080"
-APT_PROXY_CONF="/etc/apt/apt.conf.d/90proxy.conf"
+APT_PROXY_CONF="/etc/apt/apt.conf.d/90-proxy.conf"
 
 # sudoers 独立配置文件
 SUDOERS_FILE="/etc/sudoers.d/90-user-env"
@@ -152,29 +152,42 @@ User() {
 }
 
 SSH() {
-    # 修改 /etc/ssh/sshd_config 的相关配置
+    # 修改 sshd 配置（通过 drop-in 文件）
     echo "=> Setup ssh server"
     read -rsp $'Press enter to continue...\n'
 
-    # 修改 root 的登录方式
-    echo "Change sshd_config deny / remote login"
-    sed -i 's/PermitRootLogin yes/PermitRootLogin prohibit-password/g' /etc/ssh/sshd_config
+    SSHD_CONFIG="/etc/ssh/sshd_config"
+    DROPIN_DIR="/etc/ssh/sshd_config.d"
+    DROPIN_FILE="${DROPIN_DIR}/90-vps-init.conf"
 
-    # 修改配置选项
+    echo "=> Write ${DROPIN_FILE}"
+    mkdir -p "${DROPIN_DIR}"
+
+    # 写入 drop-in 配置
     {
-        echo ""
+        echo "# Managed by vps_init.sh"
+        echo "PermitRootLogin prohibit-password"
         echo "UseDNS no"
         echo "#GatewayPorts yes"
-    } >> /etc/ssh/sshd_config
+    } > "${DROPIN_FILE}"
 
     # 修改 sshd 的监听端口
     read -p "=> Setup ssh server => Change port to ${SSH_PORT}? === (y/No) " opt
     case "${opt}" in
         y|yes)
-            sed -i "s/Port [0-9]\\+/Port ${SSH_PORT}/g" /etc/ssh/sshd_config
-            sed -i "s/^#Port ${SSH_PORT}/Port ${SSH_PORT}/g" /etc/ssh/sshd_config
+            # 注释掉 sshd_config 中的 Port 行，避免双端口监听
+            sed -i 's/^Port /#Port /' "${SSHD_CONFIG}"
+            echo "Port ${SSH_PORT}" >> "${DROPIN_FILE}"
             ;;
     esac
+
+    # 确保 sshd_config 包含 Include 指令
+    if ! grep -qF "Include ${DROPIN_DIR}/*.conf" "${SSHD_CONFIG}" 2>/dev/null; then
+        {
+            echo ""
+            echo "Include ${DROPIN_DIR}/*.conf"
+        } >> "${SSHD_CONFIG}"
+    fi
 
     service ssh restart
 }
@@ -227,8 +240,17 @@ Disable_Resolve() {
         fi
     } > "${resolv_file}"
 
-    systemctl stop systemd-resolved*
-    systemctl disable systemd-resolved*
+    if systemctl status systemd-resolved-varlink.socket &> /dev/null; then
+        systemctl disable --now systemd-resolved-varlink.socket
+    fi
+    
+    if systemctl status systemd-resolved-monitor.socket &> /dev/null; then
+        systemctl disable --now systemd-resolved-monitor.socket
+    fi 
+    
+    if systemctl status systemd-resolved.service &> /dev/null; then
+        systemctl disable --now systemd-resolved.service
+    fi
 }
 
 Set_Journal() {
@@ -388,11 +410,13 @@ Verify() {
     echo "${OSVersion}"
     
     # 验证配置
-    sysctl net.ipv4.tcp_available_congestion_control
-    lsmod | grep bbr || true
-    sudo ufw status
+    sudo sysctl net.ipv4.tcp_available_congestion_control
+    sudo lsmod | grep bbr || true
     sudo netstat -lntp
     sudo netstat -lnup
+    if [ -x /usr/sbin/ufw ]; then
+        sudo ufw status
+    fi
 }
 
 

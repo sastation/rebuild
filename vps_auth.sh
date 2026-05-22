@@ -39,8 +39,20 @@ GoogleAuth() {
     sed -i '6i\auth required pam_google_authenticator.so nullok' "${FS}"
     sed -i '7i\ ' "${FS}"
 
-    FS="/etc/ssh/sshd_config"
-    sed -i 's/^ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' "${FS}"
+    SSHD_CONFIG="/etc/ssh/sshd_config"
+    DROPIN_DIR="/etc/ssh/sshd_config.d"
+    DROPIN_FILE="${DROPIN_DIR}/90-vps-auth.conf"
+
+    mkdir -p "${DROPIN_DIR}"
+    echo "ChallengeResponseAuthentication yes" > "${DROPIN_FILE}"
+
+    # 确保 sshd_config 包含 Include 指令（追加到末尾）
+    if ! grep -qF "Include ${DROPIN_DIR}/*.conf" "${SSHD_CONFIG}" 2>/dev/null; then
+        {
+            echo ""
+            echo "Include ${DROPIN_DIR}/*.conf"
+        } >> "${SSHD_CONFIG}"
+    fi
 
     cat > /etc/security/access_vps.conf << EOF
 # skip one-time password if logging in from the trusted network
