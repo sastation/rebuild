@@ -10,6 +10,8 @@
 # 方法一：使用 netplany 中的 set-name
 $ vi /etc/netplan/01-netcfg.yaml
    ...
+   dhcp-identifier: mac
+   ...
    match:
      #name: interface-name
      macaddress: aa:bb:cc:dd:ee:ff
@@ -58,8 +60,8 @@ $  reboot
 
 ```bash
 # disable reserved block for root user
-# tune2fs -l /dev/sda1 | grep Reserved
-# tune2fs -m 1 /dev/sda1
+tune2fs -l /dev/sda1 | grep Reserved
+tune2fs -m 1 /dev/sda1
 ```
 
 ## Family 环境中的额外设置
@@ -117,5 +119,6 @@ EOF
 systemctl disable --now systemd-resolved-varlink.socket
 systemctl disable --now systemd-resolved-monitor.socket
 systemctl disable --now systemd-resolve.service
+
 ```
 
