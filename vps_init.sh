@@ -57,7 +57,7 @@ fi
 if [[ "${ADMIN_USER}" == __* ]]; then
     echo "ERROR: ADMIN_USER is not set."
     echo "       Create vps_init.env or edit the config section above."
-    echo "       Run ./generate.sh to generate a personal config."
+    echo "       Run ./vps_generate.sh to generate a personal config."
     exit 1
 fi
 

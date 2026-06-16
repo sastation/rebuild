@@ -1,3 +1,4 @@
 Archive
-vps_init.env
-vps_private.sh
+vps_init*.env
+vps_private*.sh
+.claude

@@ -26,7 +26,7 @@
 |---|---|
 | `vps_init.sh` | 主初始化脚本：用户创建、SSH 加固、防火墙、BBR 等 |
 | `vps_auth.sh` | Google Authenticator 双因素认证配置 |
-| `generate.sh` | 个人配置生成器（两种模式） |
+| `vps_generate.sh` | 个人配置生成器（两种模式） |
 | `vps_init.env` | 个人配置（由 generate.sh 生成，包含真实值） |
 | `vps_netplan.sh` | 网络管理从 ifupdown 切换为 netplan |
 
@@ -37,7 +37,7 @@
 #### 1. 生成个人配置
 
 ```bash
-./generate.sh
+./vps_generate.sh
 ```
 
 选择模式：
