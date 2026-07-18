@@ -350,6 +350,20 @@ net.ipv4.tcp_congestion_control=bbr
 # --- 禁用 IPv6 ---
 #net.ipv6.conf.all.disable_ipv6=1
 #net.ipv6.conf.default.disable_ipv6=1
+
+# --- 设置连接参数 ---
+# 小内存主机设置最大连接数限制 = nf_conntrack_buckets * 4
+#net.netfilter.nf_conntrack_buckets = 4096
+#net.netfilter.nf_conntrack_max = 16384
+
+# 缩短 TIME_WAIT 和 ESTABLISHED 的超时时间
+net.netfilter.nf_conntrack_tcp_timeout_established = 1200
+net.netfilter.nf_conntrack_tcp_timeout_syn_sent=30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 15
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+
+
 EOF
 
     sysctl -p
