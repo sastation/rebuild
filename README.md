@@ -1,6 +1,20 @@
 # Debian/Ubuntu  初始化套件
 
 
+## 一键重装系统（DD系统）
+
+```bash
+# Debian 专用，支持在 debian/ubuntu 中重新安装纯净 debian
+./zdebian.sh
+
+# 源自 bin456789/reinstall
+./bin456789_reinstall.sh
+
+# 源自 leitbogioro/Tools
+./reinstallNET.sh
+
+```
+
 
 ## Debian/Ubuntu  初始化脚本
 
@@ -14,7 +28,6 @@
 | `vps_config.sh.example` | 配置源示例（复制为 `vps_config.sh` 填入真实值） | 公开 |
 | `vps_config.sh` | 私有配置源：`common` + 多 profile 真实值 | `.gitignore` |
 | `vps_deploy.sh` | 生成的单文件部署脚本（内嵌全部 profile） | `.gitignore` |
-| `vps_auth.sh` | Google Authenticator 双因素认证配置 | 公开 |
 | `vps_netplan.sh` | 网络管理从 ifupdown 切换为 netplan | 公开 |
 
 ### Profile 说明
@@ -58,15 +71,6 @@ cp vps_config.sh.example vps_config.sh   # 编辑填入真实值
 选项 7 → 验证配置
 ```
 
-#### 3. Google Authenticator（可选）
-
-```bash
-./vps_auth.sh
-```
-
-- **1) System-wide setup** — 安装 Google Authenticator PAM 模块，配置受信 IP 白名单
-- **2) Local user setup** — 为当前用户生成密钥和随机备用码
-
 ### 菜单详解
 
 #### Root Permission
@@ -102,7 +106,6 @@ cp vps_config.sh.example vps_config.sh   # 编辑填入真实值
 |---|---|
 | `/etc/sudoers.d/90-user-env` | sudoers 规则（NOPASSWD、超时、代理继承） |
 | `/etc/ssh/sshd_config.d/90-vps-init.conf` | SSH 服务端配置（PermitRootLogin、UseDNS） |
-| `/etc/ssh/sshd_config.d/90-vps-auth.conf` | Google Auth ChallengeResponse 配置 |
 | `/etc/apt/apt.conf.d/90-proxy.conf` | APT 代理（Family 环境） |
 | `/etc/fail2ban/jail.d/90-vps-sshd.local` | fail2ban SSH 防护（banaction=ufw、ignoreip） |
 
@@ -112,4 +115,3 @@ cp vps_config.sh.example vps_config.sh   # 编辑填入真实值
 - 公共库中的 `vps_init.sh` 使用占位符，不含真实个人信息
 - `vps_config.sh`、`vps_deploy.sh` 含真实值，已加入 `.gitignore`，请勿上传公共库
 - fail2ban 复用 `TRUSTED_IPS` 作为 `ignoreip`，避免误封受信 IP
-- Google Authenticator 备用码每次运行随机生成，不落盘
