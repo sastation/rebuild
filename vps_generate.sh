@@ -1,9 +1,20 @@
 #!/bin/bash
-# generate.sh — 生成个人配置
+# vps_generate.sh — 从配置源生成单文件部署脚本
 #
-# 两种模式:
-#   1) vps_init.env      — 独立配置文件，配合 vps_init.sh / vps_auth.sh 使用
-#   2) vps_private.sh    — 完整独立脚本（含真实值），无需 env 文件
+# 数据流:
+#   vps_config.sh (common + 多 profile, 私有)
+#        │ 读取/注入
+#        ▼
+#   vps_deploy.sh (单文件, 内嵌全部 profile, 私有)
+#
+# 用法:
+#   ./vps_generate.sh            # 交互选择：录入配置源 或 直接从已有配置源生成
+#   ./vps_generate.sh generate   # 直接从已有 vps_config.sh 生成 vps_deploy.sh
+#   ./vps_generate.sh collect    # 交互录入并写入 vps_config.sh
+
+CONFIG_SRC="vps_config.sh"
+TEMPLATE="vps_init.sh"
+DEPLOY="vps_deploy.sh"
 
 # ============================================================
 # 辅助函数
@@ -50,7 +61,6 @@ read_array() {
         items+=("${input}")
         i=$((i + 1))
     done
-    # 将数组写入一个临时变量（通过 eval 的副作用存储）
     local str="${var}=("
     for item in "${items[@]}"; do
         str+=" \"${item}\""
@@ -59,181 +69,231 @@ read_array() {
     eval "${str}"
 }
 
-array_to_lines() {
-    local var="$1"
-    # 读取数组并逐行输出
-    eval "local items=(\"\${${var}[@]}\")"
-    echo "${var}=("
-    for item in "${items[@]}"; do
-        echo "    \"${item}\""
-    done
-    echo ")"
+emit_scalar() {
+    # 若变量非空则输出 "    NAME=\"value\"" 到目标文件
+    local name="$1" value="$2" out="$3"
+    [[ -n "${value}" ]] && echo "    ${name}=\"${value}\"" >> "${out}"
+}
+
+emit_array() {
+    # 输出数组赋值（缩进 4 空格），无元素则跳过
+    local name="$1" out="$2"; shift 2
+    local items=("$@")
+    [[ ${#items[@]} -eq 0 ]] && return
+    {
+        echo "    ${name}=("
+        for item in "${items[@]}"; do
+            echo "        \"${item}\""
+        done
+        echo "    )"
+    } >> "${out}"
 }
 
 # ============================================================
-# 收集配置值
+# 交互录入 → 写入 vps_config.sh
 # ============================================================
 
-collect_values() {
+collect_common() {
     echo ""
-    echo "输入各配置项的值（直接回车跳过）:"
-    echo ""
-
-    read_val_nospace ADMIN_USER "管理员用户名" "__ADMIN_USER__"
-    read_val SSH_PORT "SSH 端口" "__SSH_PORT__"
-    read_val DOMAIN "DNS 搜索域" "__DOMAIN__"
-    read_val PROXY_HTTP "局域网代理地址" "__PROXY_HTTP__"
-    read_val DNS_FAMILY_PRIMARY "家庭 DNS 主" "__DNS_FAMILY_PRIMARY__"
-    read_val DNS_FAMILY_SECONDARY "家庭 DNS 备" "__DNS_FAMILY_SECONDARY__"
-    read_val GIT_NAME "Git 用户名" "__GIT_NAME__"
-    read_val GIT_EMAIL "Git 邮箱" "__GIT_EMAIL__"
+    echo "== 录入 common 公共层（直接回车跳过） =="
+    GIT_NAME=""; GIT_EMAIL=""; TIMEZONE=""
+    DNS_PRIMARY=""; DNS_SECONDARY=""
+    SSH_AUTHORIZED_KEYS=(); TRUSTED_IPS=()
+    read_val TIMEZONE "时区" "Asia/Shanghai"
+    read_val DNS_PRIMARY "DNS 主" "1.1.1.1"
+    read_val DNS_SECONDARY "DNS 备" "8.8.4.4"
+    read_val GIT_NAME "Git 用户名" ""
+    read_val GIT_EMAIL "Git 邮箱" ""
     read_array SSH_AUTHORIZED_KEYS "SSH 公钥"
-    read_array TRUSTED_IPS "Google Auth 信任 IP"
+    read_array TRUSTED_IPS "fail2ban 信任 IP"
 }
 
-# ============================================================
-# 生成 vps_init.env
-# ============================================================
+collect_profile() {
+    # 录入单个 profile，结果存入以 profile 名前缀的临时变量
+    local pname="$1"
+    echo ""
+    echo "== 录入 profile: ${pname}（直接回车跳过） =="
+    P_AREA="VPS"; P_ADMIN_USER=""; P_SSH_PORT=""; P_DOMAIN=""
+    P_PROXY_HTTP=""; P_DNS_PRIMARY=""; P_DNS_SECONDARY=""
+    read_val P_AREA "环境类型 (VPS/Family)" "VPS"
+    read_val_nospace P_ADMIN_USER "管理员用户名" ""
+    read_val P_SSH_PORT "SSH 端口" ""
+    read_val P_DOMAIN "DNS 搜索域" ""
+    if [[ "${P_AREA}" = "Family" ]]; then
+        read_val P_PROXY_HTTP "局域网代理地址" ""
+        read_val P_DNS_PRIMARY "内网 DNS 主（覆盖 common）" ""
+        read_val P_DNS_SECONDARY "内网 DNS 备（覆盖 common）" ""
+    fi
+}
 
-generate_env() {
-    local output="vps_init.env"
-
-    cat > "${output}" << 'EOF'
+write_config_src() {
+    # 写入 common
+    cat > "${CONFIG_SRC}" << 'EOF'
+#!/bin/bash
 # ============================================================
-# 个人配置 — 由 generate.sh 自动生成
+# 私有配置源 — 由 vps_generate.sh 生成，请勿上传公共库
 # ============================================================
 
 EOF
 
-    if [[ -n "${ADMIN_USER}" ]]; then
-        echo "ADMIN_USER=\"${ADMIN_USER}\"" >> "${output}"
-    fi
+    echo "PROFILES=(${PROFILE_NAMES[*]})" >> "${CONFIG_SRC}"
+    echo "" >> "${CONFIG_SRC}"
 
-    {
-        echo ""
-        echo "# --- SSH ---"
-    } >> "${output}"
+    # common 函数
+    echo "profile_common() {" >> "${CONFIG_SRC}"
+    emit_scalar TIMEZONE "${TIMEZONE}" "${CONFIG_SRC}"
+    emit_scalar DNS_PRIMARY "${DNS_PRIMARY}" "${CONFIG_SRC}"
+    emit_scalar DNS_SECONDARY "${DNS_SECONDARY}" "${CONFIG_SRC}"
+    emit_scalar GIT_NAME "${GIT_NAME}" "${CONFIG_SRC}"
+    emit_scalar GIT_EMAIL "${GIT_EMAIL}" "${CONFIG_SRC}"
+    emit_array SSH_AUTHORIZED_KEYS "${CONFIG_SRC}" "${SSH_AUTHORIZED_KEYS[@]}"
+    emit_array TRUSTED_IPS "${CONFIG_SRC}" "${TRUSTED_IPS[@]}"
+    echo "    :" >> "${CONFIG_SRC}"
+    echo "}" >> "${CONFIG_SRC}"
+    echo "" >> "${CONFIG_SRC}"
 
-    [[ -n "${SSH_PORT}" ]] && echo "SSH_PORT=\"${SSH_PORT}\"" >> "${output}"
+    # 各 profile 函数
+    local pname
+    for pname in "${PROFILE_NAMES[@]}"; do
+        eval "local area=\"\${AREA_${pname}}\""
+        eval "local admin=\"\${ADMIN_USER_${pname}}\""
+        eval "local port=\"\${SSH_PORT_${pname}}\""
+        eval "local domain=\"\${DOMAIN_${pname}}\""
+        eval "local proxy=\"\${PROXY_HTTP_${pname}}\""
+        eval "local dns1=\"\${DNS_PRIMARY_${pname}}\""
+        eval "local dns2=\"\${DNS_SECONDARY_${pname}}\""
+        echo "profile_${pname}() {" >> "${CONFIG_SRC}"
+        emit_scalar AREA "${area}" "${CONFIG_SRC}"
+        emit_scalar ADMIN_USER "${admin}" "${CONFIG_SRC}"
+        emit_scalar SSH_PORT "${port}" "${CONFIG_SRC}"
+        emit_scalar DOMAIN "${domain}" "${CONFIG_SRC}"
+        emit_scalar PROXY_HTTP "${proxy}" "${CONFIG_SRC}"
+        emit_scalar DNS_PRIMARY "${dns1}" "${CONFIG_SRC}"
+        emit_scalar DNS_SECONDARY "${dns2}" "${CONFIG_SRC}"
+        echo "    :" >> "${CONFIG_SRC}"
+        echo "}" >> "${CONFIG_SRC}"
+        echo "" >> "${CONFIG_SRC}"
+    done
 
-    {
-        echo ""
-        echo "# --- 家庭网络（Family 环境） ---"
-    } >> "${output}"
+    echo "  已生成配置源: ${CONFIG_SRC}"
+}
 
-    [[ -n "${DOMAIN}" ]] && echo "DOMAIN=\"${DOMAIN}\"" >> "${output}"
-    [[ -n "${PROXY_HTTP}" ]] && echo "PROXY_HTTP=\"${PROXY_HTTP}\"" >> "${output}"
-    [[ -n "${DNS_FAMILY_PRIMARY}" ]] && echo "DNS_FAMILY_PRIMARY=\"${DNS_FAMILY_PRIMARY}\"" >> "${output}"
-    [[ -n "${DNS_FAMILY_SECONDARY}" ]] && echo "DNS_FAMILY_SECONDARY=\"${DNS_FAMILY_SECONDARY}\"" >> "${output}"
-
-    {
-        echo ""
-        echo "# --- Git 配置 ---"
-    } >> "${output}"
-
-    [[ -n "${GIT_NAME}" ]] && echo "GIT_NAME=\"${GIT_NAME}\"" >> "${output}"
-    [[ -n "${GIT_EMAIL}" ]] && echo "GIT_EMAIL=\"${GIT_EMAIL}\"" >> "${output}"
-
-    echo "" >> "${output}"
-    echo "# --- SSH 公钥 ---" >> "${output}"
-    if [[ ${#SSH_AUTHORIZED_KEYS[@]} -gt 0 ]]; then
-        array_to_lines SSH_AUTHORIZED_KEYS >> "${output}"
-    fi
-
-    echo "" >> "${output}"
-    echo "# --- Google Authenticator 信任 IP ---" >> "${output}"
-    if [[ ${#TRUSTED_IPS[@]} -gt 0 ]]; then
-        array_to_lines TRUSTED_IPS >> "${output}"
-    fi
+collect_values() {
+    PROFILE_NAMES=()
+    collect_common
 
     echo ""
-    echo "  已生成: ${output}"
-    echo "  将此文件与 vps_init.sh / vps_auth.sh 放在同目录即可。"
+    echo "== 录入 profile（可添加多个） =="
+    while true; do
+        local pname
+        printf "  新 profile 名称（留空结束）: "
+        read -r pname
+        [[ -z "${pname}" ]] && break
+        if [[ "${pname}" == *" "* || "${pname}" = "common" ]]; then
+            echo "  ERROR: 名称非法（不能含空格或为 common）"
+            continue
+        fi
+        collect_profile "${pname}"
+        PROFILE_NAMES+=("${pname}")
+        eval "AREA_${pname}=\"\${P_AREA}\""
+        eval "ADMIN_USER_${pname}=\"\${P_ADMIN_USER}\""
+        eval "SSH_PORT_${pname}=\"\${P_SSH_PORT}\""
+        eval "DOMAIN_${pname}=\"\${P_DOMAIN}\""
+        eval "PROXY_HTTP_${pname}=\"\${P_PROXY_HTTP}\""
+        eval "DNS_PRIMARY_${pname}=\"\${P_DNS_PRIMARY}\""
+        eval "DNS_SECONDARY_${pname}=\"\${P_DNS_SECONDARY}\""
+    done
+
+    if [[ ${#PROFILE_NAMES[@]} -eq 0 ]]; then
+        echo "  ERROR: 至少需要一个 profile"
+        exit 1
+    fi
+
+    write_config_src
 }
 
 # ============================================================
-# 生成 vps_private.sh
+# 从 vps_config.sh 注入模板 → 生成 vps_deploy.sh
 # ============================================================
 
-generate_private_sh() {
-    local src="vps_init.sh"
-    local dst="vps_private.sh"
-
-    if [[ ! -f "${src}" ]]; then
-        echo "  ERROR: 找不到 ${src}"
-        return 1
+generate_deploy() {
+    if [[ ! -f "${CONFIG_SRC}" ]]; then
+        echo "  ERROR: 找不到 ${CONFIG_SRC}，请先录入配置。"
+        exit 1
+    fi
+    if [[ ! -f "${TEMPLATE}" ]]; then
+        echo "  ERROR: 找不到模板 ${TEMPLATE}"
+        exit 1
     fi
 
-    # 1. 复制模板
-    cp "${src}" "${dst}"
+    # shellcheck disable=SC1090
+    source "${CONFIG_SRC}"
 
-    # 2. 删除 "Load personal config override" 区块（含验证）
-    sed -i '/^# Load personal config override/,/^# Runtime variables/{
-        /^# Load personal config override/d
-        /^# Runtime variables/!d
-    }' "${dst}"
+    if [[ ${#PROFILES[@]} -eq 0 ]]; then
+        echo "  ERROR: ${CONFIG_SRC} 中未定义 PROFILES"
+        exit 1
+    fi
 
-    # 3. 替换简单标量占位符（使用 | 作为 sed 定界符）
-    [[ -n "${ADMIN_USER}" ]]            && sed -i "s|__ADMIN_USER__|${ADMIN_USER}|g" "${dst}"
-    [[ -n "${SSH_PORT}" ]]              && sed -i "s|__SSH_PORT__|${SSH_PORT}|g" "${dst}"
-    [[ -n "${DOMAIN}" ]]                && sed -i "s|__DOMAIN__|${DOMAIN}|g" "${dst}"
-    [[ -n "${PROXY_HTTP}" ]]            && sed -i "s|__PROXY_HTTP__|${PROXY_HTTP}|g" "${dst}"
-    [[ -n "${DNS_FAMILY_PRIMARY}" ]]    && sed -i "s|__DNS_FAMILY_PRIMARY__|${DNS_FAMILY_PRIMARY}|g" "${dst}"
-    [[ -n "${DNS_FAMILY_SECONDARY}" ]]  && sed -i "s|__DNS_FAMILY_SECONDARY__|${DNS_FAMILY_SECONDARY}|g" "${dst}"
-    [[ -n "${GIT_NAME}" ]]              && sed -i "s|__GIT_NAME__|${GIT_NAME}|g" "${dst}"
-    [[ -n "${GIT_EMAIL}" ]]             && sed -i "s|__GIT_EMAIL__|${GIT_EMAIL}|g" "${dst}"
+    cp "${TEMPLATE}" "${DEPLOY}"
 
-    # 4. 替换 SSH_AUTHORIZED_KEYS 数组区块
-    local tmpf tmp_keys
-    tmpf="$(mktemp)"
-    tmp_keys="$(mktemp)"
+    # 1. 替换 PROFILES 列表
+    sed -i "s|__PROFILE_LIST__|${PROFILES[*]}|" "${DEPLOY}"
 
-    # 用 awk 将占位数组替换为唯一标记行
-    # __SSH_KEY_1__ 在数组元素中，需 peek 下一行来判断
-    awk '
-        /^SSH_AUTHORIZED_KEYS=\(/ {
-            line = $0
-            getline next_line
-            if (next_line ~ /__SSH_KEY_1__/) {
-                print "__SSH_KEYS_BLOCK__"
-                while (getline && !/^\)/) {}
-                next
-            } else {
-                print line
-                print next_line
-                next
+    # 2. 生成 common 函数体（含数组），替换 profile_common 中的占位
+    local body_file
+    body_file="$(mktemp)"
+    {
+        # 提取 profile_common 的函数体（去掉外层定义），直接内联展开
+        # 通过重新调用 common 后 declare 收集较复杂，这里直接从源函数抽取赋值行
+        declare -f profile_common | sed -e '1,2d' -e '$d'
+    } > "${body_file}"
+
+    # 用函数体替换 profile_common() { ... } 整块
+    #   模板中 profile_common 为占位实现，需整体替换
+    replace_func_block "profile_common" "${body_file}" "${DEPLOY}"
+    rm -f "${body_file}"
+
+    # 3. 生成各 profile 函数，替换 __PROFILE_FUNCS__ 标记行
+    local funcs_file p
+    funcs_file="$(mktemp)"
+    for p in "${PROFILES[@]}"; do
+        declare -f "profile_${p}" >> "${funcs_file}"
+        echo "" >> "${funcs_file}"
+    done
+    sed -i "/^# __PROFILE_FUNCS__$/{
+        r ${funcs_file}
+        d
+    }" "${DEPLOY}"
+    rm -f "${funcs_file}"
+
+    chmod +x "${DEPLOY}"
+    echo ""
+    echo "  已生成: ${DEPLOY}"
+    echo "  单文件、内嵌全部 profile，无需外部文件即可运行。"
+    echo "  用法: ./${DEPLOY} [--profile <name>]"
+}
+
+replace_func_block() {
+    # 用给定的函数体文件替换目标脚本中已存在的同名函数整块定义
+    local fname="$1" body_file="$2" target="$3"
+    local tmp
+    tmp="$(mktemp)"
+    awk -v fname="${fname}" -v bodyfile="${body_file}" '
+        $0 ~ "^"fname"\\(\\) \\{" {
+            print fname"() {"
+            while ((getline line < bodyfile) > 0) print line
+            print "}"
+            # 跳过原函数体直到匹配到单独的 }
+            depth = 1
+            while (depth > 0) {
+                if ((getline l) <= 0) break
+                if (l ~ /\{/) depth++
+                if (l ~ /^\}/) depth--
             }
+            next
         }
         { print }
-    ' "${dst}" > "${tmpf}" && mv "${tmpf}" "${dst}"
-
-    # 生成真实数组内容
-    {
-        echo "SSH_AUTHORIZED_KEYS=("
-        if [[ ${#SSH_AUTHORIZED_KEYS[@]} -gt 0 ]]; then
-            for key in "${SSH_AUTHORIZED_KEYS[@]}"; do
-                echo "    \"${key}\""
-            done
-        fi
-        echo ")"
-    } > "${tmp_keys}"
-
-    # 用 sed 的 r + d 替换标记行：读取文件内容，删除标记行
-    sed -i '/^__SSH_KEYS_BLOCK__$/{
-        r '"${tmp_keys}"'
-        d
-    }' "${dst}"
-
-    rm -f "${tmpf}" "${tmp_keys}"
-
-    # 5. 修改文件头注释
-    sed -i 's/Configuration — edit these values or create vps_init.env/Configuration — personal standalone script/' "${dst}"
-
-    chmod +x "${dst}"
-
-    echo ""
-    echo "  已生成: ${dst}"
-    echo "  独立脚本，无需 vps_init.env 即可运行。"
+    ' "${target}" > "${tmp}" && mv "${tmp}" "${target}"
 }
 
 # ============================================================
@@ -241,45 +301,39 @@ generate_private_sh() {
 # ============================================================
 
 echo "============================================"
-echo "  VPS Init 配置生成器"
+echo "  VPS 部署脚本生成器"
 echo "============================================"
-echo ""
-echo "生成模式:"
-echo "  1) vps_init.env      — 交互式输入，生成独立配置文件"
-echo "  2) vps_private.sh    — 从已有 vps_init.env 生成完整独立脚本"
-echo ""
-printf "选择 [1]: "
-read mode
-mode="${mode:-1}"
+
+MODE="${1:-}"
+if [[ -z "${MODE}" ]]; then
+    echo ""
+    echo "  1) 从已有 ${CONFIG_SRC} 生成 ${DEPLOY}"
+    echo "  2) 交互录入配置并写入 ${CONFIG_SRC}"
+    echo ""
+    printf "选择 [1]: "
+    read -r m
+    case "${m:-1}" in
+        2) MODE="collect" ;;
+        *) MODE="generate" ;;
+    esac
+fi
 
 echo ""
 echo "============================================"
-
-case "${mode}" in
-    2)
-        # 从 vps_init.env 读取配置 → 生成独立脚本
-        if [[ ! -f "vps_init.env" ]]; then
-            echo "  ERROR: 找不到 vps_init.env"
-            echo "  请先用模式 1 生成 vps_init.env"
-            exit 1
-        fi
-        source vps_init.env
-        generate_private_sh
+case "${MODE}" in
+    collect)
+        collect_values
+        echo ""
+        printf "立即生成 ${DEPLOY}? (y/No) "
+        read -r yn
+        case "${yn}" in y|yes) generate_deploy ;; esac
+        ;;
+    generate)
+        generate_deploy
         ;;
     *)
-        # 交互式输入 → 生成 vps_init.env
-        ADMIN_USER=""
-        DOMAIN=""
-        PROXY_HTTP=""
-        DNS_FAMILY_PRIMARY=""
-        DNS_FAMILY_SECONDARY=""
-        GIT_NAME=""
-        GIT_EMAIL=""
-        SSH_AUTHORIZED_KEYS=()
-        TRUSTED_IPS=()
-
-        collect_values
-        generate_env
+        echo "  未知模式: ${MODE}"
+        exit 1
         ;;
 esac
 echo "============================================"

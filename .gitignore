@@ -1,4 +1,8 @@
 Archive
 vps_init*.env
 vps_private*.sh
+vps_config.sh
+vps_deploy.sh
 .claude
+
+*.swp

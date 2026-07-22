@@ -1,0 +1,64 @@
+#!/bin/bash
+# ============================================================
+# 配置源示例 — 复制为 vps_config.sh 并填入真实值
+#   cp vps_config.sh.example vps_config.sh
+# 说明:
+#   - common 层放公共默认值，各 profile 覆盖差异项
+#   - vps_config.sh 含真实值，已在 .gitignore 中，请勿上传公共库
+#   - 用 ./vps_generate.sh 生成单文件 vps_deploy.sh 后远程部署
+# ============================================================
+
+PROFILES=(home vps public)
+
+profile_common() {
+    TIMEZONE="Asia/Shanghai"
+    # 默认 DNS（各 profile 可覆盖，如家庭环境改用内网 DNS）
+    DNS_PRIMARY="1.1.1.1"
+    DNS_SECONDARY="8.8.4.4"
+    # 日志上限（profile 可覆盖）
+    JOURNAL_MAX_SIZE="64M"
+    GIT_NAME="Your Name"
+    GIT_EMAIL="your@email.com"
+    SSH_AUTHORIZED_KEYS=(
+        "ssh-ed25519 AAAA... key1"
+        "ssh-ed25519 AAAA... key2"
+    )
+    # fail2ban ignoreip 白名单
+    TRUSTED_IPS=(
+        "1.2.3.4/32"
+    )
+    # fail2ban 参数（可选，留空则用脚本默认）
+    F2B_MAXRETRY="5"
+    F2B_FINDTIME="10m"
+    F2B_BANTIME="1h"
+    :
+}
+
+# 家庭 / 局域网：经代理上网，使用内网 DNS
+profile_home() {
+    AREA="Family"
+    ADMIN_USER="app"
+    SSH_PORT="22"
+    DOMAIN="home.lan"
+    PROXY_HTTP="http://proxy.lan:8080"
+    # 覆盖 common 的默认 DNS，使用内网 DNS
+    DNS_PRIMARY="192.168.1.1"
+    DNS_SECONDARY="192.168.1.2"
+    :
+}
+
+# 个人公网 VPS
+profile_vps() {
+    AREA="VPS"
+    ADMIN_USER="app"
+    SSH_PORT="22"
+    :
+}
+
+# 他人所有、代为维护的公网主机
+profile_public() {
+    AREA="VPS"
+    ADMIN_USER="ops"
+    SSH_PORT="2222"
+    :
+}

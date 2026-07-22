@@ -2,92 +2,111 @@
 set -euo pipefail
 
 # ============================================================
-# Configuration — edit these values or create vps_init.env
+# Fixed constants — do not contain personal data
 # ============================================================
-
-# 普通用户（用于日常管理）
-ADMIN_USER="__ADMIN_USER__"
-
-# SSH
-SSH_PORT="__SSH_PORT__"
-
-# 时区
-TIMEZONE="Asia/Shanghai"
-
-# DNS 搜索域
-DOMAIN="__DOMAIN__"
-
-# 局域网代理地址（Family 环境使用）
-PROXY_HTTP="__PROXY_HTTP__"
 APT_PROXY_CONF="/etc/apt/apt.conf.d/90-proxy.conf"
-
-# sudoers 独立配置文件
 SUDOERS_FILE="/etc/sudoers.d/90-user-env"
 
-# DNS 服务器
-DNS_VPS_PRIMARY="1.1.1.1"
-DNS_VPS_SECONDARY="8.8.8.8"
-DNS_FAMILY_PRIMARY="__DNS_FAMILY_PRIMARY__"
-DNS_FAMILY_SECONDARY="__DNS_FAMILY_SECONDARY__"
-
-# Journal 日志上限
-JOURNAL_MAX_SIZE_VPS="64M"
-JOURNAL_MAX_SIZE_FAMILY="128M"
-
-# Git 配置
-GIT_NAME="__GIT_NAME__"
-GIT_EMAIL="__GIT_EMAIL__"
-
-# SSH 公钥（写入 ADMIN_USER 的 authorized_keys）
-# 格式：每行一个公钥，用双引号括起
-SSH_AUTHORIZED_KEYS=(
-    "__SSH_KEY_1__"
-    "__SSH_KEY_2__"
-)
+# 默认值（可被 profile 覆盖）
+ADMIN_USER=""
+SSH_PORT=""
+TIMEZONE="Asia/Shanghai"
+DOMAIN=""
+PROXY_HTTP=""
+AREA="VPS"
+DNS_PRIMARY="1.1.1.1"
+DNS_SECONDARY="8.8.4.4"
+JOURNAL_MAX_SIZE="64M"
+GIT_NAME=""
+GIT_EMAIL=""
+SSH_AUTHORIZED_KEYS=()
+TRUSTED_IPS=()
+F2B_MAXRETRY="5"
+F2B_FINDTIME="10m"
+F2B_BANTIME="1h"
 
 # ============================================================
-# Load personal config override
+# Profiles — 真实值由 vps_generate.sh 注入到 vps_deploy.sh
 # ============================================================
-VPS_ENV="$(dirname "$0")/vps_init.env"
-if [[ -f "${VPS_ENV}" ]]; then
-    source "${VPS_ENV}"
-fi
+PROFILES=( __PROFILE_LIST__ )
 
-# 检查必要配置是否已填写
-if [[ "${ADMIN_USER}" == __* ]]; then
-    echo "ERROR: ADMIN_USER is not set."
-    echo "       Create vps_init.env or edit the config section above."
-    echo "       Run ./vps_generate.sh to generate a personal config."
-    exit 1
-fi
+profile_common() {
+    # __COMMON_BODY__
+    :
+}
+
+# __PROFILE_FUNCS__
 
 # ============================================================
 # Runtime variables (do not edit)
 # ============================================================
-USER_HOME="/home/${ADMIN_USER}"
 ID="$(id -u)"
 OSName="$(awk -F'"' '/^NAME=/ {print $2}' /etc/os-release | awk '{print $1}')"
 OSVersion="$(awk -F'"' '/VERSION_ID=/ {print $2}' /etc/os-release)"
-Area="VPS"     # 当前所处环境，在 DetectArea 中重新赋值
 Separator="$(printf '%*s' 50 | tr ' ' '*')"
+SELECTED_PROFILE=""
+USER_HOME=""
 
 # ============================================================
 # Functions
 # ============================================================
 
-DetectArea() {
-    # 判断当前是否处于局域网中，值存入 $Area
-    echo "=> Select environment type"
-    echo "  1) Family"
-    echo "  2) VPS"
-    read -p "Enter choice [2]: " area_choice
-    case "${area_choice}" in
-        1) Area="Family" ;;
-        *) Area="VPS" ;;
-    esac
-    echo "Selected area: ${Area}"
+ProfileExists() {
+    # 判断 profile 是否在 PROFILES 列表中
+    local name="$1" p
+    for p in "${PROFILES[@]}"; do
+        [[ "${p}" = "${name}" ]] && return 0
+    done
+    return 1
+}
 
-    if [[ "${Area}" = "Family" ]]; then
+SelectProfile() {
+    # 确定当前 profile：命令行参数优先，否则交互选择
+    if [[ -z "${SELECTED_PROFILE}" ]]; then
+        if [[ ${#PROFILES[@]} -eq 0 ]]; then
+            echo "ERROR: No profiles defined."
+            echo "       Generate vps_deploy.sh via ./vps_generate.sh first."
+            exit 1
+        fi
+        echo "=> Select profile"
+        local i=1 name
+        for name in "${PROFILES[@]}"; do
+            echo "  ${i}) ${name}"
+            i=$((i + 1))
+        done
+        local choice
+        read -p "Enter number or name [1]: " choice
+        choice="${choice:-1}"
+        if [[ "${choice}" =~ ^[0-9]+$ ]]; then
+            SELECTED_PROFILE="${PROFILES[$((choice - 1))]:-}"
+        else
+            SELECTED_PROFILE="${choice}"
+        fi
+    fi
+
+    if ! ProfileExists "${SELECTED_PROFILE}"; then
+        echo "ERROR: profile '${SELECTED_PROFILE}' not found."
+        echo "       Available: ${PROFILES[*]}"
+        exit 1
+    fi
+
+    echo "Selected profile: ${SELECTED_PROFILE}"
+
+    # 加载顺序：common 先，profile 后覆盖
+    profile_common
+    "profile_${SELECTED_PROFILE}"
+
+    # 校验必要配置
+    if [[ -z "${ADMIN_USER}" || "${ADMIN_USER}" == __* ]]; then
+        echo "ERROR: ADMIN_USER is not set in profile '${SELECTED_PROFILE}'."
+        exit 1
+    fi
+
+    # 派生运行时变量
+    USER_HOME="/home/${ADMIN_USER}"
+
+    # 代理与 APT 代理配置（PROXY_HTTP 有值则生效）
+    if [[ -n "${PROXY_HTTP}" ]]; then
         export http_proxy="${PROXY_HTTP}"
         export https_proxy="${PROXY_HTTP}"
         if [[ "${ID}" -eq 0 ]]; then
@@ -154,6 +173,7 @@ User() {
 
     # Add into sudoers
     echo "=> Add ${ADMIN_USER} into sudoers (${SUDOERS_FILE})"
+    apt update 2>/dev/null || true
     apt install sudo -y
     if [[ ! -f "${SUDOERS_FILE}" ]] || ! grep -q "^${ADMIN_USER}" "${SUDOERS_FILE}" 2>/dev/null; then
         echo "${ADMIN_USER}   ALL=(ALL:ALL) NOPASSWD:ALL" >> "${SUDOERS_FILE}"
@@ -166,6 +186,16 @@ User() {
     cp /root/*.sh "${USER_HOME}/" 2>/dev/null || echo "No .sh files in /root to copy"
     chown "${ADMIN_USER}":"${ADMIN_USER}" "${USER_HOME}"/*.sh 2>/dev/null || true
     chmod 755 "${USER_HOME}"/*.sh 2>/dev/null || true
+
+    # 写入 SSH 公钥到 root（幂等）
+    if [[ ${#SSH_AUTHORIZED_KEYS[@]} -gt 0 ]]; then
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        for key in "${SSH_AUTHORIZED_KEYS[@]}"; do
+            grep -qF "${key}" /root/.ssh/authorized_keys 2>/dev/null && continue
+            echo "${key}" >> /root/.ssh/authorized_keys
+        done
+    fi
 }
 
 SSH() {
@@ -248,13 +278,8 @@ Disable_Resolve() {
     {
         echo "#domain ${DOMAIN}"
         echo "search ${DOMAIN}"
-        if [[ "${Area}" = "Family" ]]; then
-            echo "nameserver ${DNS_FAMILY_PRIMARY}"
-            echo "nameserver ${DNS_FAMILY_SECONDARY}"
-        else
-            echo "nameserver ${DNS_VPS_PRIMARY}"
-            echo "nameserver ${DNS_VPS_SECONDARY}"
-        fi
+        echo "nameserver ${DNS_PRIMARY}"
+        [[ -n "${DNS_SECONDARY}" ]] && echo "nameserver ${DNS_SECONDARY}"
     } > "${resolv_file}"
 
     if systemctl status systemd-resolved-varlink.socket &> /dev/null; then
@@ -273,11 +298,7 @@ Disable_Resolve() {
 Set_Journal() {
     # 设置日志大小
     fs="/etc/systemd/journald.conf"
-    if [[ "${Area}" = "Family" ]]; then
-        sed -i "s/^#\{0,1\}SystemMaxUse=.*/SystemMaxUse=${JOURNAL_MAX_SIZE_FAMILY}/g" "${fs}"
-    else
-        sed -i "s/^#\{0,1\}SystemMaxUse=.*/SystemMaxUse=${JOURNAL_MAX_SIZE_VPS}/g" "${fs}"
-    fi
+    sed -i "s/^#\{0,1\}SystemMaxUse=.*/SystemMaxUse=${JOURNAL_MAX_SIZE}/g" "${fs}"
     sed -i "s/^#\{0,1\}MaxRetentionSec=.*/MaxRetentionSec=7d/g" "${fs}"
     systemctl restart systemd-journald
 
@@ -285,11 +306,13 @@ Set_Journal() {
 }
 
 Modify_Sudoers() {
-    # 在 sudoers.d 中添加选项：继承代理环境、设置超时时间
-    {
-        echo "Defaults timestamp_timeout=30"
-        echo "Defaults env_keep=\"http_proxy https_proxy HTTP_PROXY HTTPS_PROXY\""
-    } >> "${SUDOERS_FILE}"
+    # 在 sudoers.d 中添加选项：继承代理环境、设置超时时间（幂等）
+    grep -q "Defaults timestamp_timeout=30" "${SUDOERS_FILE}" 2>/dev/null \
+        && echo "Defaults already set, skipping." \
+        || echo "Defaults timestamp_timeout=30" >> "${SUDOERS_FILE}"
+    grep -q "Defaults env_keep=" "${SUDOERS_FILE}" 2>/dev/null \
+        && echo "Defaults env_keep already set, skipping." \
+        || echo "Defaults env_keep=\"http_proxy https_proxy HTTP_PROXY HTTPS_PROXY\"" >> "${SUDOERS_FILE}"
     chmod 0440 "${SUDOERS_FILE}"
     echo "=> Updated ${SUDOERS_FILE}"
 }
@@ -304,7 +327,7 @@ UFW() {
     echo "=> Setup firewall"
     apt -y install ufw
     ufw allow 22/tcp
-    ufw allow "${SSH_PORT}/tcp"
+    [[ -n "${SSH_PORT}" ]] && ufw allow "${SSH_PORT}/tcp"
     ufw allow 80
     ufw allow 443
     ufw allow 2443
@@ -322,10 +345,9 @@ TZ() {
 }
 
 BBR() {
-    # 安装及配置 BBR
+    # 安装及配置 BBR（通过 sysctl.d drop-in，幂等）
     echo "=> Enable BBR"
-    cat >> /etc/sysctl.conf << 'EOF'
-
+    cat > /etc/sysctl.d/90-vps-bbr.conf << 'EOF'
 # --- 核心网络配置 (旁路由必需) ---
 #net.ipv4.ip_forward=1
 #net.ipv4.conf.all.send_redirects=0
@@ -350,7 +372,12 @@ net.ipv4.tcp_congestion_control=bbr
 # --- 禁用 IPv6 ---
 #net.ipv6.conf.all.disable_ipv6=1
 #net.ipv6.conf.default.disable_ipv6=1
+EOF
 
+    # conntrack 参数（仅模块可用时追加）
+    if modprobe -n nf_conntrack 2>/dev/null; then
+        modprobe nf_conntrack 2>/dev/null || true
+        cat >> /etc/sysctl.d/90-vps-bbr.conf << 'EOF'
 # --- 设置连接参数 ---
 # 小内存主机设置最大连接数限制 = nf_conntrack_buckets * 4
 #net.netfilter.nf_conntrack_buckets = 4096
@@ -362,11 +389,10 @@ net.netfilter.nf_conntrack_tcp_timeout_syn_sent=30
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 15
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
-
-
 EOF
+    fi
 
-    sysctl -p
+    sysctl -p /etc/sysctl.d/90-vps-bbr.conf
 }
 
 Docker_Proxy() {
@@ -391,7 +417,7 @@ Docker() {
     curl -sSL https://get.docker.com/ | sh
     usermod -aG docker "${ADMIN_USER}"
 
-    if [[ "${Area}" = "Family" ]]; then
+    if [[ -n "${PROXY_HTTP}" ]]; then
         read -p "=> Setup Docker => Set proxies? === (y/No) " opt
         case "${opt}" in
             y|yes) Docker_Proxy ;;
@@ -420,6 +446,7 @@ SetupUserEnv() {
         mkdir -p "${USER_HOME}/.ssh"
         chmod 700 "${USER_HOME}/.ssh"
         for key in "${SSH_AUTHORIZED_KEYS[@]}"; do
+            grep -qF "${key}" "${USER_HOME}/.ssh/authorized_keys" 2>/dev/null && continue
             echo "${key}" >> "${USER_HOME}/.ssh/authorized_keys"
         done
     fi
@@ -429,7 +456,11 @@ SetupUserEnv() {
     cd ~
     mkdir -p coding/github
     cd coding/github
-    git clone --depth=1 https://github.com/sastation/environment-config.git
+    if [[ -d environment-config ]]; then
+        echo "environment-config already exists, skipping clone."
+    else
+        git clone --depth=1 https://github.com/sastation/environment-config.git
+    fi
     cd environment-config
     ./run.sh
 }
@@ -454,6 +485,42 @@ Verify() {
     fi
 }
 
+F2B() {
+    # 防暴力破解登录：fail2ban 保护 SSH，通过 UFW 执行封禁
+    echo "=> Setup fail2ban (SSH brute-force protection)"
+    apt -y install fail2ban
+
+    local jail_dir="/etc/fail2ban/jail.d"
+    local jail_file="${jail_dir}/90-vps-sshd.local"
+    local ssh_port="${SSH_PORT:-22}"
+
+    # 组装 ignoreip：本地 + 受信 IP
+    local ignore="127.0.0.1/8 ::1"
+    if [[ ${#TRUSTED_IPS[@]} -gt 0 ]]; then
+        ignore="${ignore} ${TRUSTED_IPS[*]}"
+    fi
+
+    mkdir -p "${jail_dir}"
+    # 覆盖式写入，保证幂等
+    cat > "${jail_file}" << EOF
+[DEFAULT]
+banaction = ufw
+ignoreip = ${ignore}
+
+[sshd]
+enabled  = true
+port     = ${ssh_port}
+maxretry = ${F2B_MAXRETRY}
+findtime = ${F2B_FINDTIME}
+bantime  = ${F2B_BANTIME}
+EOF
+
+    systemctl enable --now fail2ban
+    systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban
+    echo "=> fail2ban configured (${jail_file})"
+    fail2ban-client status sshd 2>/dev/null || true
+}
+
 
 
 # ============================================================
@@ -461,7 +528,24 @@ Verify() {
 # ============================================================
 MAX=30
 
-DetectArea
+# 解析命令行参数：--profile <name> / -p <name>
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile|-p)
+            SELECTED_PROFILE="${2:-}"
+            shift 2
+            ;;
+        --profile=*)
+            SELECTED_PROFILE="${1#*=}"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+SelectProfile
 
 while [[ "${MAX}" -gt 0 ]]; do
     echo "${Separator}"
@@ -470,6 +554,7 @@ while [[ "${MAX}" -gt 0 ]]; do
     echo "* 2. Install Docker"
     echo "* 3. Change hostname"
     echo "* 4. Adjust system services"
+    echo "* 5. Setup fail2ban"
     echo ""
     echo "*** Local Permission"
     echo "* 6. Setup environment of ${ADMIN_USER}"
@@ -503,6 +588,9 @@ while [[ "${MAX}" -gt 0 ]]; do
 
         read -p "=== Run BBR? === (y/No) " opt
         case "${opt}" in y|yes) BBR ;; esac
+
+        read -p "=== Run fail2ban? === (y/No) " opt
+        case "${opt}" in y|yes) F2B ;; esac
         ;;
     2)
         Docker
@@ -525,6 +613,11 @@ while [[ "${MAX}" -gt 0 ]]; do
 
         read -p "=== Set ping permission? === (y/No) " opt
         case "${opt}" in y|yes) Set_Ping ;; esac
+        ;;
+    5)
+        Root
+        OS
+        F2B
         ;;
     6)
         SetupUserEnv
