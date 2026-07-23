@@ -8,9 +8,11 @@
 ./zdebian.sh
 
 # 源自 bin456789/reinstall
-./bin456789_reinstall.sh
+# https://raw.githubusercontent.com/bin456789/reinstall/refs/heads/main/reinstall.sh
+./reinstall.sh
 
 # 源自 leitbogioro/Tools
+# https://raw.githubusercontent.com/leitbogioro/Tools/refs/heads/master/Linux_reinstall/InstallNET.sh
 ./reinstallNET.sh
 
 ```
