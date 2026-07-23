@@ -60,8 +60,10 @@ $  reboot
 
 ```bash
 # disable reserved block for root user
-tune2fs -l /dev/sda1 | grep Reserved
-tune2fs -m 1 /dev/sda1
+FS=$(df -h . | tail -n 1 | awk '{print $1}')
+echo $FS # /dev/sda1
+tune2fs -l $FS | grep Reserved
+tune2fs -m 1 $FS
 ```
 
 ## Family 环境中的额外设置
