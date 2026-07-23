@@ -504,8 +504,12 @@ F2B() {
     # 覆盖式写入，保证幂等
     cat > "${jail_file}" << EOF
 [DEFAULT]
+backend  = systemd
 banaction = ufw
 ignoreip = ${ignore}
+
+[Definition]
+allowipv6 = auto
 
 [sshd]
 enabled  = true
